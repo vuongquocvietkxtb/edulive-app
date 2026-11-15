@@ -118,14 +118,14 @@ export default function AuthModal({ isOpen, onClose }) {
               onClick={() => handleQuickDemoLogin('teacher')}
               className="py-2 px-3 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-all flex items-center justify-center gap-1.5"
             >
-              <span>👨‍🏫 Giảng viên</span>
+              <span>👩‍🏫 Cô Nguyễn Thị Loan</span>
             </button>
             <button
               type="button"
               onClick={() => handleQuickDemoLogin('student')}
               className="py-2 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-all flex items-center justify-center gap-1.5"
             >
-              <span>🎓 Học viên</span>
+              <span>🎓 Học viên mẫu</span>
             </button>
           </div>
         </div>
@@ -219,34 +219,13 @@ export default function AuthModal({ isOpen, onClose }) {
             </div>
           </div>
 
-          {/* Role selector for register */}
+          {/* Role note for register */}
           {isRegisterTab && (
-            <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1">Bạn tham gia với vai trò</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setRole('student')}
-                  className={`py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                    role === 'student'
-                      ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500'
-                      : 'bg-slate-800/50 text-slate-400 border-slate-700'
-                  }`}
-                >
-                  <span>🎓 Học viên</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRole('teacher')}
-                  className={`py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                    role === 'teacher'
-                      ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500'
-                      : 'bg-slate-800/50 text-slate-400 border-slate-700'
-                  }`}
-                >
-                  <span>👨‍🏫 Giảng viên</span>
-                </button>
-              </div>
+            <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 text-xs text-slate-300 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              <span>
+                Lớp học do <strong className="text-white">Giáo viên Nguyễn Thị Loan</strong> phụ trách. Bạn đang tạo tài khoản <strong className="text-emerald-400">Học viên</strong>.
+              </span>
             </div>
           )}
 

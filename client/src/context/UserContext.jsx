@@ -11,10 +11,10 @@ export const UserProvider = ({ children }) => {
     }
     return {
       id: 'usr-teacher-1',
-      name: 'Thầy Nguyễn Văn Nam',
+      name: 'Giáo viên Nguyễn Thị Loan',
       email: 'giaovien@edulive.vn',
       role: 'teacher',
-      avatar: '👨‍🏫'
+      avatar: '👩‍🏫'
     };
   });
 
@@ -83,10 +83,10 @@ export const UserProvider = ({ children }) => {
     if (newRole === 'teacher') {
       setUser({
         id: 'usr-teacher-1',
-        name: 'Thầy Nguyễn Văn Nam',
+        name: 'Giáo viên Nguyễn Thị Loan',
         email: 'giaovien@edulive.vn',
         role: 'teacher',
-        avatar: '👨‍🏫'
+        avatar: '👩‍🏫'
       });
     } else {
       setUser({

@@ -105,11 +105,11 @@ if (countUsers.count === 0) {
 
   insertUser.run(
     'usr-teacher-1',
-    'Thầy Nguyễn Văn Nam',
+    'Giáo viên Nguyễn Thị Loan',
     'giaovien@edulive.vn',
     hashPassword('123456'),
     'teacher',
-    '👨‍🏫'
+    '👩‍🏫'
   );
 
   insertUser.run(
@@ -129,7 +129,20 @@ if (countUsers.count === 0) {
     'student',
     '👩‍🎓'
   );
+} else {
+  // Ensure the single teacher is Giáo viên Nguyễn Thị Loan
+  db.prepare(`
+    UPDATE users 
+    SET name = 'Giáo viên Nguyễn Thị Loan', avatar = '👩‍🏫'
+    WHERE role = 'teacher'
+  `).run();
 }
+
+// Update any existing courses and sessions to Giáo viên Nguyễn Thị Loan
+try {
+  db.prepare(`UPDATE courses SET teacher_name = 'Giáo viên Nguyễn Thị Loan'`).run();
+  db.prepare(`UPDATE attendance_sessions SET teacher_name = 'Giáo viên Nguyễn Thị Loan'`).run();
+} catch (e) {}
 
 // Insert initial demo courses if empty
 const countCourses = db.prepare('SELECT count(*) as count FROM courses').get();

@@ -41,9 +41,9 @@ export default function Classroom() {
 
   // Quick preset rooms
   const presetRooms = [
-    { id: 'PHONG-101', name: 'Lớp Lập trình Web Frontend', teacher: 'Thầy Nam', count: 12 },
-    { id: 'PHONG-TOAN', name: 'Lớp Toán Ứng Dụng & Giải Thuật', teacher: 'Cô Hà', count: 8 },
-    { id: 'PHONG-TIENG-ANH', name: 'Luyện nói Tiếng Anh Trực Tuyến', teacher: 'Mr. David', count: 15 }
+    { id: 'PHONG-101', name: 'Lớp Học Trực Tuyến Cơ Bản', teacher: 'Cô Nguyễn Thị Loan', count: 16 },
+    { id: 'PHONG-CHUYEN-DE', name: 'Lớp Chuyên Đề & Ôn Luyện Nâng Cao', teacher: 'Cô Nguyễn Thị Loan', count: 12 },
+    { id: 'PHONG-BAI-TAP', name: 'Lớp Giải Đáp Bài Tập & Thảo Luận', teacher: 'Cô Nguyễn Thị Loan', count: 20 }
   ];
 
   // Request user webcam/mic

@@ -60,8 +60,9 @@ app.post('/api/auth/register', (req, res) => {
     }
 
     const userId = 'usr-' + crypto.randomUUID().slice(0, 8);
-    const userRole = role === 'teacher' ? 'teacher' : 'student';
-    const avatar = userRole === 'teacher' ? '👨‍🏫' : '🎓';
+    // Lớp học chỉ có 1 giáo viên duy nhất là Giáo viên Nguyễn Thị Loan
+    const userRole = 'student';
+    const avatar = '🎓';
     const passHash = hashPassword(password);
 
     db.prepare(`
