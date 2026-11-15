@@ -7,7 +7,15 @@ export const UserProvider = ({ children }) => {
   const [user, setUser] = useState(() => {
     const saved = localStorage.getItem('edulive_user');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) { }
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.role === 'teacher' || (parsed.name && parsed.name.includes('Nam'))) {
+          parsed.name = 'Giáo viên Nguyễn Thị Loan';
+          parsed.avatar = '👩‍🏫';
+          localStorage.setItem('edulive_user', JSON.stringify(parsed));
+        }
+        return parsed;
+      } catch (e) { }
     }
     return {
       id: 'usr-teacher-1',
@@ -17,6 +25,16 @@ export const UserProvider = ({ children }) => {
       avatar: '👩‍🏫'
     };
   });
+
+  useEffect(() => {
+    if (user && (user.role === 'teacher' || (user.name && user.name.includes('Nam')))) {
+      if (user.name !== 'Giáo viên Nguyễn Thị Loan' || user.avatar !== '👩‍🏫') {
+        const fixed = { ...user, name: 'Giáo viên Nguyễn Thị Loan', avatar: '👩‍🏫' };
+        setUser(fixed);
+        localStorage.setItem('edulive_user', JSON.stringify(fixed));
+      }
+    }
+  }, [user]);
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
