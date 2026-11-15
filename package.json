@@ -1,0 +1,18 @@
+{
+  "name": "edulive-platform",
+  "version": "1.0.0",
+  "description": "Phần mềm giảng dạy trực tuyến & Lớp học ảo EduLive",
+  "type": "module",
+  "scripts": {
+    "install:server": "cd server && npm install",
+    "install:client": "cd client && npm install",
+    "install:all": "npm run install:server && npm run install:client",
+    "build": "npm run install:all && cd client && npm run build",
+    "start": "cd server && node index.js",
+    "dev:server": "cd server && node index.js",
+    "dev:client": "cd client && npm run dev"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
