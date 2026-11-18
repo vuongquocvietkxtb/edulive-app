@@ -164,18 +164,100 @@ function pickBestAlternative(result, preferMath) {
 
 // Nhận dạng chữ viết tay qua Google Input Tools (miễn phí, hỗ trợ tiếng Việt có dấu)
 const HANDWRITING_URL = 'https://inputtools.google.com/request?ime=handwriting&app=mobilesearch&cs=1&oe=UTF-8';
-async function recognizeInk(strokes, width, height) {
+// Gửi nhiều cụm nét trong 1 lần gọi → mảng danh sách phương án cho từng cụm
+async function recognizeInkBatch(inks, width, height) {
   const res = await fetch(HANDWRITING_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       options: 'enable_pre_space',
-      requests: [{ writing_guide: { writing_area_width: width, writing_area_height: height }, ink: strokes, language: 'vi' }]
+      requests: inks.map((ink) => ({
+        writing_guide: { writing_area_width: width, writing_area_height: height },
+        ink,
+        language: 'vi'
+      }))
     })
   });
   const data = await res.json();
-  if (data?.[0] !== 'SUCCESS') return [];
-  return (data[1]?.[0]?.[1] || []).map((s) => s.trim()).filter(Boolean);
+  if (data?.[0] !== 'SUCCESS') return inks.map(() => []);
+  return inks.map((_, k) => (data[1]?.[k]?.[1] || []).map((s) => s.trim()).filter(Boolean));
+}
+
+const SUB = { '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉', '-': '₋', '+': '₊' };
+const toSub = (s) => [...s].map((c) => SUB[c] || c).join('');
+// Kết quả trông như công thức (chỉ ký tự ASCII, có số/dấu) → mới tách số mũ, tránh nhầm dấu tiếng Việt
+const looksLikeFormula = (t) => /[\d=+\-<>]/.test(t) && /^[\x20-\x7E]+$/.test(t);
+
+// Phân loại từng nét theo vị trí so với ký tự gốc đứng trước: chính / số mũ (sup) / chỉ số dưới (sub),
+// rồi gom thành các cụm liên tiếp cùng loại theo thứ tự trái → phải.
+function splitScriptRuns(strokes) {
+  const boxes = strokes
+    .map((s) => {
+      const minX = Math.min(...s[0]), maxX = Math.max(...s[0]);
+      const minY = Math.min(...s[1]), maxY = Math.max(...s[1]);
+      return { s, minX, maxX, minY, maxY, w: maxX - minX, h: maxY - minY, cy: (minY + maxY) / 2 };
+    })
+    .sort((a, b) => a.minX - b.minX);
+
+  const hs = boxes.map((b) => b.h).sort((a, b) => a - b);
+  const refH = hs[Math.floor(hs.length * 0.75)] || 1;
+  let base = null;
+
+  boxes.forEach((b, idx) => {
+    // Nét chồng lên nét trước (chữ viết nhiều nét: x, +, =, 4, 5...) → cùng loại với nét đó
+    const overlapPrev = boxes.slice(Math.max(0, idx - 2), idx).find(
+      (p) => Math.min(b.maxX, p.maxX) - Math.max(b.minX, p.minX) > 0.5 * Math.max(1, Math.min(b.w, p.w))
+    );
+    let cls = 'main';
+    if (overlapPrev) {
+      cls = overlapPrev.cls;
+    } else if (base && b.h > refH * 0.2 && b.h < base.h * 0.9) {
+      if (b.maxY < base.cy) cls = 'sup';
+      else if (b.minY > base.cy) cls = 'sub';
+    }
+    b.cls = cls;
+    if (cls === 'main' && b.h >= refH * 0.5) base = b;
+  });
+
+  const runs = [];
+  boxes.forEach((b) => {
+    const last = runs[runs.length - 1];
+    if (last && last.cls === b.cls) last.ink.push(b.s);
+    else runs.push({ cls: b.cls, ink: [b.s] });
+  });
+  return runs;
+}
+
+// So khớp chuỗi đầy đủ T ("x2+y2=5") với chuỗi chỉ nét chính M ("x+y=5") theo LCS;
+// các ký tự dư ra trong T là số mũ / chỉ số, gán lần lượt cho các cụm sup/sub theo thứ tự trái → phải.
+function applyScripts(T, M, scriptClasses) {
+  const a = T.toLowerCase(), b = M.toLowerCase();
+  const n = a.length, m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+
+  const matched = new Array(n).fill(false);
+  for (let i = 0, j = 0; i < n && j < m; ) {
+    if (a[i] === b[j]) { matched[i] = true; i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+    else j++;
+  }
+
+  const groups = [];
+  for (let i = 0; i < n; i++) {
+    if (matched[i]) continue;
+    if (i > 0 && !matched[i - 1]) groups[groups.length - 1].push(i);
+    else groups.push([i]);
+  }
+  if (groups.length !== scriptClasses.length) return null;
+
+  const out = [...T];
+  groups.forEach((g, k) => g.forEach((i) => {
+    out[i] = scriptClasses[k] === 'sup' ? toSup(T[i]) : toSub(T[i]);
+  }));
+  return out.join('');
 }
 
 // Nhận diện nét vẽ tay để nắn thành hình chuẩn (đường thẳng, chữ nhật, hình tròn)
@@ -694,8 +776,23 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
 
     setHandBusy(true);
     let candidates = [];
+    const W = Math.round(rect.width), H = Math.round(rect.height);
     try {
-      candidates = await recognizeInk(strokes, Math.round(rect.width), Math.round(rect.height));
+      [candidates] = await recognizeInkBatch([strokes], W, H);
+      candidates = candidates.map((c) => c.replace(/\^(\d+)/g, (_, e) => toSup(e)));
+
+      // Công thức có số mũ / chỉ số dưới → nhận dạng lại từng cụm rồi ghép
+      if (candidates[0] && looksLikeFormula(candidates[0])) {
+        const runs = splitScriptRuns(strokes);
+        const scriptRuns = runs.filter((r) => r.cls !== 'main');
+        if (scriptRuns.length) {
+          const mainInk = runs.filter((r) => r.cls === 'main').flatMap((r) => r.ink);
+          const [mainCands] = await recognizeInkBatch([mainInk], W, H);
+          const T = candidates[0].replace(/\s+/g, '');
+          const combined = mainCands[0] && applyScripts(T, mainCands[0].replace(/\s+/g, ''), scriptRuns.map((r) => r.cls));
+          if (combined) candidates = [combined, ...candidates];
+        }
+      }
     } catch (_) {}
     setHandBusy(false);
 
