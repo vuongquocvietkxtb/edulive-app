@@ -79,6 +79,12 @@ function replaceMathOperators(text) {
     .replace(/ {2,}/g, ' ');
 }
 
+// Khẩu lệnh "xuống dòng" (kể cả các cách Chrome hay nghe nhầm) — nhận ở bất kỳ vị trí nào trong câu
+const NEWLINE_CMD_RE = /\s*(xuống dòng|xuống giòng|xuống đòng|sướng dòng|xuống dòm)\s*/iu;
+const NEWLINE_CMD_RE_G = new RegExp(NEWLINE_CMD_RE.source, 'giu');
+// "chứng tỏ" ở CUỐI câu gần như luôn là "xuống dòng" bị nghe nhầm ("chứng tỏ rằng..." vẫn giữ nguyên)
+const TRAILING_MISHEARD_NEWLINE_RE = /\s*chứng tỏ[\s.]*$/iu;
+
 // Chuẩn hóa văn bản nói tiếng Việt sang ký hiệu Toán/Tin học
 export function formatSmartSpeechText(rawText) {
   let text = rawText.trim();
@@ -360,6 +366,28 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
     // Câu đã chốt (kể cả khẩu lệnh) → xóa chữ nháp trên màn hình học sinh
     activeSocket?.emit('whiteboard-voice-preview', { roomId: activeRoomId, preview: null });
 
+    // 0. Tách lệnh "xuống dòng" nằm giữa/cuối câu: "x² + y² = 5 xuống dòng" → viết dòng rồi xuống dòng
+    const segments = rawTranscript.replace(TRAILING_MISHEARD_NEWLINE_RE, ' xuống dòng').split(NEWLINE_CMD_RE);
+    if (segments.length > 1) {
+      let prevWasText = false;
+      segments.forEach((seg, i) => {
+        if (i % 2 === 0) {
+          if (seg.trim()) {
+            processSpokenSentence(seg); // viết chữ xong con trỏ đã tự xuống dòng
+            prevWasText = true;
+          }
+        } else {
+          if (!prevWasText) {
+            const c = voiceCursorRef.current;
+            moveVoiceCursor({ x: c.x, y: c.y + latestVoiceCtx.current.fontSize * 1.45 });
+            toastFn('Đã xuống dòng');
+          }
+          prevWasText = false;
+        }
+      });
+      return;
+    }
+
     // 1. Khẩu lệnh điều khiển bảng
     if (normalized === 'xóa bảng' || normalized === 'xóa hết bảng') {
       clearFn();
@@ -439,7 +467,9 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
       }
       if (interim) {
         // Chữ nháp cũng hiển thị dạng ký hiệu (x² thay vì "x bình phương")
-        interim = formatSmartSpeechText(interim);
+        interim = formatSmartSpeechText(
+          interim.replace(TRAILING_MISHEARD_NEWLINE_RE, ' ↵').replace(NEWLINE_CMD_RE_G, ' ↵ ')
+        ).trim();
         setInterimTranscript(interim);
         const { color: col, fontSize: fSize, socket: sock, roomId: rId } = latestVoiceCtx.current;
         const cur = voiceCursorRef.current;
@@ -502,6 +532,24 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
     setIsListening(true);
     showToast('Đang nghe... Nhấp lên bảng để chọn vị trí viết');
   };
+
+  const voiceNewLine = useCallback(() => {
+    const c = voiceCursorRef.current;
+    moveVoiceCursor({ x: c.x, y: c.y + fontSize * 1.45 });
+  }, [moveVoiceCursor, fontSize]);
+
+  // Phím Enter = xuống dòng khi đang viết bằng giọng nói
+  useEffect(() => {
+    if (tool !== 'voice') return;
+    const onKey = (e) => {
+      if (e.key === 'Enter' && !/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) {
+        e.preventDefault();
+        voiceNewLine();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tool, voiceNewLine]);
 
   const selectStandardTool = (nextTool) => {
     if (isListening) stopVoiceListening();
@@ -743,6 +791,15 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
                 {f.label}
               </button>
             ))}
+            {tool === 'voice' && (
+              <button
+                onClick={voiceNewLine}
+                className="ml-1 px-2 py-0.5 text-xs rounded bg-sky-600/30 text-sky-200 hover:bg-sky-600/60"
+                title="Xuống dòng (phím Enter)"
+              >
+                ↵ Xuống dòng
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex items-center gap-1.5 bg-slate-800/80 px-2 py-1 rounded-lg">
