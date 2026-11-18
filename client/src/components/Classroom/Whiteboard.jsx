@@ -348,10 +348,6 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
   const restartTimerRef = useRef(null);
   const networkErrorsRef = useRef(0);
 
-  // Đo mức âm thanh micro để giáo viên biết micro có thu được tiếng không
-  const meterRef = useRef({ stream: null, ctx: null, raf: 0, silentSince: 0, warned: false });
-  const [micLevel, setMicLevel] = useState(0);
-
   // Viết tay → chữ đánh máy
   const handStrokesRef = useRef([]); // [[xs], [ys], [ts]] theo định dạng Google Input Tools
   const handStartTimeRef = useRef(0);
@@ -686,9 +682,8 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
         } else {
           showToast('Mất kết nối dịch vụ nhận giọng nói, đang thử lại...');
         }
-      } else if (event.error === 'no-speech') {
-        showToast('Chưa nghe thấy tiếng — kiểm tra Micro đang chọn trong cài đặt trình duyệt');
-      } else if (event.error !== 'aborted') {
+      } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
+        // 'no-speech' xảy ra mỗi khi giáo viên ngừng nói → bỏ qua, onend tự bật lại
         showToast(`Lỗi giọng nói: ${event.error}`);
       }
       console.warn('[Giọng nói] lỗi:', event.error, event.message || '');
@@ -719,60 +714,6 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
     };
   }, [processSpokenSentence, showToast]);
 
-  const stopMicMeter = useCallback(() => {
-    const m = meterRef.current;
-    cancelAnimationFrame(m.raf);
-    m.stream?.getTracks().forEach((t) => t.stop());
-    m.ctx?.close().catch(() => {});
-    meterRef.current = { stream: null, ctx: null, raf: 0, silentSince: 0, warned: false };
-    setMicLevel(0);
-  }, []);
-
-  // Xin quyền micro (lọc tiếng vọng, lọc ồn, tự cân âm lượng) và bật thanh đo mức âm
-  const startMicMeter = useCallback(async () => {
-    stopMicMeter();
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-    });
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 512;
-    ctx.createMediaStreamSource(stream).connect(analyser);
-    const buf = new Uint8Array(analyser.fftSize);
-    const m = { stream, ctx, raf: 0, silentSince: Date.now(), warned: false };
-    meterRef.current = m;
-
-    let lastShown = 0;
-    const tick = () => {
-      analyser.getByteTimeDomainData(buf);
-      let sum = 0;
-      for (let i = 0; i < buf.length; i++) {
-        const v = (buf[i] - 128) / 128;
-        sum += v * v;
-      }
-      const level = Math.min(1, Math.sqrt(sum / buf.length) * 4);
-      if (Math.abs(level - lastShown) > 0.04) {
-        lastShown = level;
-        setMicLevel(level);
-      }
-      if (level > 0.05) {
-        m.silentSince = Date.now();
-        m.warned = false;
-      } else if (!m.warned && Date.now() - m.silentSince > 6000) {
-        m.warned = true;
-        showToast('Micro không thu được âm thanh — kiểm tra micro có bị tắt tiếng / chọn đúng thiết bị');
-      }
-      m.raf = requestAnimationFrame(tick);
-    };
-    tick();
-  }, [stopMicMeter, showToast]);
-
-  // Dừng nghe (do người dùng hoặc do lỗi) → tắt đo micro; gỡ component → dọn dẹp
-  useEffect(() => {
-    if (!isListening) stopMicMeter();
-  }, [isListening, stopMicMeter]);
-  useEffect(() => stopMicMeter, [stopMicMeter]);
-
   const stopVoiceListening = useCallback(() => {
     shouldListenRef.current = false;
     try { recognitionRef.current?.stop(); } catch (_) {}
@@ -781,7 +722,7 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
     socket?.emit('whiteboard-voice-preview', { roomId, preview: null });
   }, [socket, roomId]);
 
-  const toggleVoiceTool = async () => {
+  const toggleVoiceTool = () => {
     commitText();
     const recognition = recognitionRef.current;
     if (!recognition) {
@@ -793,17 +734,6 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
       return;
     }
     setTool('voice');
-    try {
-      await startMicMeter();
-    } catch (err) {
-      console.warn('[Giọng nói] không mở được micro:', err.name, err.message);
-      showToast(
-        err.name === 'NotAllowedError'
-          ? 'Micro đang bị chặn — bấm biểu tượng 🔒 cạnh địa chỉ web để cho phép Micro'
-          : 'Không mở được Micro — kiểm tra thiết bị đã cắm và không bị ứng dụng khác chiếm'
-      );
-      return;
-    }
     shouldListenRef.current = true;
     try {
       recognition.start();
@@ -1290,18 +1220,6 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
             className="z-20 pointer-events-none flex items-center gap-2 px-3 py-1 rounded-lg border-2 border-dashed border-sky-400/80 bg-slate-900/85 backdrop-blur-sm shadow-lg max-w-[75%]"
           >
             <span className="w-0.5 h-6 bg-sky-400 animate-ping" />
-            {isListening && (
-              // Thanh mức âm micro: nhảy khi đang nói = micro thu tốt
-              <span className="flex items-end gap-0.5 h-5" title="Mức âm thanh micro">
-                {[0.1, 0.25, 0.45, 0.65, 0.85].map((t) => (
-                  <span
-                    key={t}
-                    className={`w-1 rounded-sm transition-colors ${micLevel > t ? 'bg-emerald-400' : 'bg-slate-600'}`}
-                    style={{ height: `${20 + t * 80}%` }}
-                  />
-                ))}
-              </span>
-            )}
             <span className="font-semibold">
               {interimTranscript || (isListening ? 'Đang nghe giọng nói của bạn...' : 'Nhấn "Nói viết bảng" để bắt đầu')}
             </span>
