@@ -46,6 +46,39 @@ const SPEECH_REPLACEMENTS = [
   ['mũi tên', '→'],
 ].map(([p, s]) => [phrase(p), s]);
 
+// Phép toán đọc bằng lời → dấu. Chỉ đổi khi nằm giữa hai toán hạng (số, biến 1 chữ, x², π, ngoặc...)
+// để câu thường như "trừ khi", "phép nhân" không bị đổi.
+const OPERATORS = {
+  'cộng': '+',
+  'trừ': '−',
+  'nhân với': '×',
+  'nhân': '×',
+  'chia cho': '÷',
+  'chia': '÷',
+  'bằng': '=',
+  'lớn hơn': '>',
+  'nhỏ hơn': '<',
+  '+': '+', '-': '−', '*': '×', '/': '÷', 'x': '×'
+};
+const OPERAND_BEFORE = '(?<=(?:^|[^\\p{L}])\\p{L}[⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ]*|[\\p{N}π)⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ])';
+const OPERAND_AFTER = '(?=[\\p{N}(√π−-]|\\p{L}(?!\\p{L}))';
+const OPERATOR_RE = new RegExp(
+  `${OPERAND_BEFORE}\\s*(nhân với|chia cho|lớn hơn|nhỏ hơn|cộng|trừ|nhân|chia|bằng|[+\\-*/])\\s*${OPERAND_AFTER}`,
+  'giu'
+);
+// "x" đọc là "nhân" chỉ khi đứng giữa hai số: "3 x 4" → "3 × 4"
+const TIMES_X_RE = /(?<=\d)\s+x\s+(?=\d)/g;
+
+function replaceMathOperators(text) {
+  const spaced = (op) => (op.length === 1 && /[+\-*/]/.test(op) ? op : op.toLowerCase());
+  return text
+    .replace(TIMES_X_RE, ' × ')
+    .replace(OPERATOR_RE, (_, op) => ` ${OPERATORS[spaced(op)]} `)
+    // Hệ số + biến: "2 x" → "2x"
+    .replace(/(\d)\s+(\p{L})(?!\p{L})/gu, '$1$2')
+    .replace(/ {2,}/g, ' ');
+}
+
 // Chuẩn hóa văn bản nói tiếng Việt sang ký hiệu Toán/Tin học
 export function formatSmartSpeechText(rawText) {
   let text = rawText.trim();
@@ -58,6 +91,7 @@ export function formatSmartSpeechText(rawText) {
     .replace(phrase('mũ (-?\\d+)'), (_, pre, e) => pre + toSup(e))
     .replace(/\s+([⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ⁻]+)/g, '$1')
     .replace(/√\s+/g, '√');
+  text = replaceMathOperators(text);
   // Chỉ viết hoa khi mở đầu bằng một từ (không viết hoa biến số như "x²")
   return /^\p{L}{2}/u.test(text) ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
