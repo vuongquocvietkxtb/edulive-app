@@ -346,6 +346,7 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
   const voiceCursorRef = useRef(DEFAULT_VOICE_CURSOR);
   const lastLineMathRef = useRef(false); // dòng vừa viết là công thức → ưu tiên phương án dạng toán
   const restartTimerRef = useRef(null);
+  const networkErrorsRef = useRef(0);
 
   // Viết tay → chữ đánh máy
   const handStrokesRef = useRef([]); // [[xs], [ys], [ts]] theo định dạng Google Input Tools
@@ -633,7 +634,12 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
         const transcript = result[0].transcript;
         if (result.isFinal) {
           const best = pickBestAlternative(result, lastLineMathRef.current);
-          processSpokenSentence(best.transcript);
+          console.info('[Giọng nói] nghe được:', best.transcript);
+          try {
+            processSpokenSentence(best.transcript);
+          } catch (err) {
+            console.error('[Giọng nói] lỗi xử lý câu:', err);
+          }
           if (best.confidence > 0 && best.confidence < 0.5) {
             showToast('Nghe chưa rõ — nói "hoàn tác" để xóa dòng vừa viết');
           }
@@ -667,9 +673,26 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
         setIsListening(false);
         showToast('Không tìm thấy Micro — hãy kiểm tra thiết bị');
       } else if (event.error === 'network') {
-        showToast('Mất kết nối dịch vụ nhận giọng nói, đang thử lại...');
+        networkErrorsRef.current += 1;
+        if (networkErrorsRef.current >= 3) {
+          // Lỗi lặp lại → dừng để không lặp vô hạn
+          shouldListenRef.current = false;
+          setIsListening(false);
+          showToast('Không kết nối được dịch vụ giọng nói của Google. Cốc Cốc/Brave/Opera thường bị lỗi này — hãy dùng Chrome hoặc Edge');
+        } else {
+          showToast('Mất kết nối dịch vụ nhận giọng nói, đang thử lại...');
+        }
+      } else if (event.error === 'no-speech') {
+        showToast('Chưa nghe thấy tiếng — kiểm tra Micro đang chọn trong cài đặt trình duyệt');
+      } else if (event.error !== 'aborted') {
+        showToast(`Lỗi giọng nói: ${event.error}`);
       }
-      // 'no-speech' / 'aborted': bỏ qua, onend sẽ tự bật lại
+      console.warn('[Giọng nói] lỗi:', event.error, event.message || '');
+    };
+
+    recognition.onaudiostart = () => {
+      networkErrorsRef.current = 0;
+      console.info('[Giọng nói] Micro đã bật');
     };
 
     recognition.onend = () => {
