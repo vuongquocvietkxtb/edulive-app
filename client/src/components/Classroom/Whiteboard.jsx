@@ -24,10 +24,12 @@ const SUP = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵
 const toSup = (s) => [...s].map((c) => SUP[c] || c).join('');
 
 const SPEECH_REPLACEMENTS = [
-  ['bình phương', '²'],
-  ['lập phương', '³'],
-  ['mũ hai', '²'],
-  ['mũ ba', '³'],
+  ['(?:bình|binh) (?:phương|phường|phươn)', '²'],
+  ['lập (?:phương|phường)', '³'],
+  ['(?:mũ|mủ|mù) hai', '²'],
+  ['(?:mũ|mủ|mù) ba', '³'],
+  ['căng bậc hai của', '√'],
+  ['căng bậc hai', '√'],
   ['mũ n', 'ⁿ'],
   ['căn bậc hai của', '√'],
   ['căn bậc hai', '√'],
@@ -58,12 +60,17 @@ const OPERATORS = {
   'bằng': '=',
   'lớn hơn': '>',
   'nhỏ hơn': '<',
+  // Các cách Chrome hay nghe nhầm (chỉ đổi khi nằm giữa hai toán hạng)
+  'công': '+', 'cọng': '+', 'còng': '+',
+  'chừ': '−',
+  'nhăn': '×', 'nhơn': '×',
+  'chìa': '÷',
   '+': '+', '-': '−', '*': '×', '/': '÷', 'x': '×'
 };
 const OPERAND_BEFORE = '(?<=(?:^|[^\\p{L}])\\p{L}[⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ]*|[\\p{N}π)⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ])';
 const OPERAND_AFTER = '(?=[\\p{N}(√π−-]|\\p{L}(?!\\p{L}))';
 const OPERATOR_RE = new RegExp(
-  `${OPERAND_BEFORE}\\s*(nhân với|chia cho|lớn hơn|nhỏ hơn|cộng|trừ|nhân|chia|bằng|[+\\-*/])\\s*${OPERAND_AFTER}`,
+  `${OPERAND_BEFORE}\\s*(nhân với|chia cho|lớn hơn|nhỏ hơn|cộng|công|cọng|còng|trừ|chừ|nhân|nhăn|nhơn|chia|chìa|bằng|[+\\-*/])\\s*${OPERAND_AFTER}`,
   'giu'
 );
 // "x" đọc là "nhân" chỉ khi đứng giữa hai số: "3 x 4" → "3 × 4"
@@ -128,6 +135,31 @@ export function formatSmartSpeechText(rawText) {
   text = replaceMathOperators(text);
   // Chỉ viết hoa khi mở đầu bằng một từ (không viết hoa biến số như "x²")
   return /^\p{L}{2}/u.test(text) ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
+const VOICE_COMMANDS = new Set([
+  'xóa bảng', 'xóa hết bảng', 'hoàn tác', 'quay lại', 'xóa dòng', 'sửa lại', 'xóa câu vừa rồi',
+  'chữ nhỏ', 'chữ vừa', 'chữ lớn', 'tiêu đề'
+]);
+
+// Chọn phương án tốt nhất trong các phương án Chrome trả về (maxAlternatives):
+// ưu tiên khẩu lệnh khớp chính xác, và câu dạng công thức nếu dòng trước cũng là công thức.
+function pickBestAlternative(result, preferMath) {
+  let best = result[0];
+  let bestScore = -Infinity;
+  for (let k = 0; k < result.length; k++) {
+    const alt = result[k];
+    const t = alt.transcript;
+    const n = t.trim().toLowerCase().replace(/[.,!?]+$/, '');
+    let score = (alt.confidence || 0) + (k === 0 ? 0.15 : 0);
+    if (VOICE_COMMANDS.has(n) || /^(đổi )?màu /.test(n) || NEWLINE_CMD_RE.test(t)) score += 1;
+    if (preferMath && MATH_HINT_RE.test(formatSmartSpeechText(t))) score += 0.3;
+    if (score > bestScore) {
+      bestScore = score;
+      best = alt;
+    }
+  }
+  return best;
 }
 
 // Nhận diện nét vẽ tay để nắn thành hình chuẩn (đường thẳng, chữ nhật, hình tròn)
@@ -212,6 +244,8 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
   const shouldListenRef = useRef(false);
   // Con trỏ giọng nói lưu ở ref để nhiều câu chốt liên tiếp không viết đè nhau
   const voiceCursorRef = useRef(DEFAULT_VOICE_CURSOR);
+  const lastLineMathRef = useRef(false); // dòng vừa viết là công thức → ưu tiên phương án dạng toán
+  const restartTimerRef = useRef(null);
 
   const [tool, setTool] = useState('pen'); // 'pen' | 'text' | 'voice' | 'line' | 'rect' | 'circle' | 'eraser'
   const [smartShape, setSmartShape] = useState(true);
@@ -422,7 +456,7 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
       toastFn('Đã xóa sạch bảng');
       return;
     }
-    if (normalized === 'hoàn tác' || normalized === 'quay lại') {
+    if (['hoàn tác', 'quay lại', 'xóa dòng', 'sửa lại', 'xóa câu vừa rồi'].includes(normalized)) {
       undoFn();
       toastFn('Đã hoàn tác');
       return;
@@ -467,6 +501,7 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
     historyRef.current.push(action);
     drawFn(canvas.getContext('2d'), action);
     activeSocket?.emit('whiteboard-draw', { roomId: activeRoomId, action });
+    lastLineMathRef.current = MATH_HINT_RE.test(formatted);
 
     // Tự dời con trỏ xuống dòng tiếp theo
     moveVoiceCursor({ x: cur.x, y: cur.y + activeFontSize * 1.45 });
@@ -481,13 +516,19 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
     recognition.lang = 'vi-VN';
     recognition.continuous = true;
     recognition.interimResults = true;
+    recognition.maxAlternatives = 5;
 
     recognition.onresult = (event) => {
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          processSpokenSentence(transcript);
+        const result = event.results[i];
+        const transcript = result[0].transcript;
+        if (result.isFinal) {
+          const best = pickBestAlternative(result, lastLineMathRef.current);
+          processSpokenSentence(best.transcript);
+          if (best.confidence > 0 && best.confidence < 0.5) {
+            showToast('Nghe chưa rõ — nói "hoàn tác" để xóa dòng vừa viết');
+          }
           setInterimTranscript('');
         } else {
           interim += transcript;
@@ -513,12 +554,24 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
         shouldListenRef.current = false;
         setIsListening(false);
         showToast('Vui lòng cấp quyền Micro trên trình duyệt');
+      } else if (event.error === 'audio-capture') {
+        shouldListenRef.current = false;
+        setIsListening(false);
+        showToast('Không tìm thấy Micro — hãy kiểm tra thiết bị');
+      } else if (event.error === 'network') {
+        showToast('Mất kết nối dịch vụ nhận giọng nói, đang thử lại...');
       }
+      // 'no-speech' / 'aborted': bỏ qua, onend sẽ tự bật lại
     };
 
     recognition.onend = () => {
       if (shouldListenRef.current) {
-        try { recognition.start(); } catch (_) {}
+        // Chrome tự ngắt sau ~60 giây hoặc khi im lặng → bật lại sau một nhịp ngắn
+        clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = setTimeout(() => {
+          if (!shouldListenRef.current) return;
+          try { recognition.start(); } catch (_) {}
+        }, 300);
       } else {
         setIsListening(false);
       }
