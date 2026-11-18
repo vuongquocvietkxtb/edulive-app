@@ -162,6 +162,22 @@ function pickBestAlternative(result, preferMath) {
   return best;
 }
 
+// Nhận dạng chữ viết tay qua Google Input Tools (miễn phí, hỗ trợ tiếng Việt có dấu)
+const HANDWRITING_URL = 'https://inputtools.google.com/request?ime=handwriting&app=mobilesearch&cs=1&oe=UTF-8';
+async function recognizeInk(strokes, width, height) {
+  const res = await fetch(HANDWRITING_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      options: 'enable_pre_space',
+      requests: [{ writing_guide: { writing_area_width: width, writing_area_height: height }, ink: strokes, language: 'vi' }]
+    })
+  });
+  const data = await res.json();
+  if (data?.[0] !== 'SUCCESS') return [];
+  return (data[1]?.[0]?.[1] || []).map((s) => s.trim()).filter(Boolean);
+}
+
 // Nhận diện nét vẽ tay để nắn thành hình chuẩn (đường thẳng, chữ nhật, hình tròn)
 function detectSmartShape(points) {
   if (!points || points.length < 8) return null;
@@ -246,6 +262,14 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
   const voiceCursorRef = useRef(DEFAULT_VOICE_CURSOR);
   const lastLineMathRef = useRef(false); // dòng vừa viết là công thức → ưu tiên phương án dạng toán
   const restartTimerRef = useRef(null);
+
+  // Viết tay → chữ đánh máy
+  const handStrokesRef = useRef([]); // [[xs], [ys], [ts]] theo định dạng Google Input Tools
+  const handStartTimeRef = useRef(0);
+  const handTimerRef = useRef(null);
+  const lastHandActionRef = useRef(null);
+  const [handCandidates, setHandCandidates] = useState(null); // { list, x, y }
+  const [handBusy, setHandBusy] = useState(false);
 
   const [tool, setTool] = useState('pen'); // 'pen' | 'text' | 'voice' | 'line' | 'rect' | 'circle' | 'eraser'
   const [smartShape, setSmartShape] = useState(true);
@@ -632,8 +656,87 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [tool, voiceNewLine]);
 
+  // Ghi một dòng chữ (từ viết tay) lên bảng và đồng bộ
+  const commitHandText = (text, x, y, size) => {
+    const action = { tool: 'text', x, y, text, color, fontSize: size };
+    historyRef.current.push(action);
+    renderAction(canvasRef.current.getContext('2d'), action);
+    socket?.emit('whiteboard-draw', { roomId, action });
+    lastHandActionRef.current = action;
+    return action;
+  };
+
+  // Đổi sang phương án nhận dạng khác (chỉ khi dòng chữ đó vẫn là thao tác mới nhất)
+  const chooseHandCandidate = (text) => {
+    const last = lastHandActionRef.current;
+    const h = historyRef.current;
+    if (!last || h[h.length - 1] !== last) {
+      showToast('Không đổi được vì đã có nét vẽ mới sau đó');
+      setHandCandidates(null);
+      return;
+    }
+    h.pop();
+    socket?.emit('whiteboard-undo', { roomId });
+    redrawFromHistory(h);
+    commitHandText(text, last.x, last.y, last.fontSize);
+    setHandCandidates(null);
+  };
+
+  const recognizeHandwriting = async () => {
+    const strokes = handStrokesRef.current;
+    handStrokesRef.current = [];
+    if (!strokes.length) return;
+
+    const xs = strokes.flatMap((s) => s[0]);
+    const ys = strokes.flatMap((s) => s[1]);
+    const minX = Math.min(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+    const rect = canvasRef.current.getBoundingClientRect();
+
+    setHandBusy(true);
+    let candidates = [];
+    try {
+      candidates = await recognizeInk(strokes, Math.round(rect.width), Math.round(rect.height));
+    } catch (_) {}
+    setHandBusy(false);
+
+    // Xóa nét mực tạm (chưa nằm trong lịch sử) bằng cách vẽ lại từ lịch sử
+    redrawFromHistory(historyRef.current);
+
+    if (!candidates.length) {
+      // Không nhận dạng được → giữ lại nét viết như bút thường
+      const strokeId = `${Date.now()}-hw`;
+      const ctx = canvasRef.current.getContext('2d');
+      strokes.forEach(([sx, sy]) => {
+        for (let i = 1; i < sx.length; i++) {
+          const act = { tool: 'pen', strokeId, fromX: sx[i - 1], fromY: sy[i - 1], toX: sx[i], toY: sy[i], color, width: lineWidth };
+          historyRef.current.push(act);
+          renderAction(ctx, act);
+          socket?.emit('whiteboard-draw', { roomId, action: act });
+        }
+      });
+      showToast('Không nhận dạng được chữ (kiểm tra mạng) — đã giữ nét viết tay');
+      return;
+    }
+
+    const size = Math.max(16, Math.min(64, Math.round((maxY - minY) * 0.8)));
+    commitHandText(candidates[0], minX, minY, size);
+    setHandCandidates({ list: candidates.slice(1, 6), x: minX, y: minY + size * 1.4 });
+  };
+
+  // Ẩn gợi ý sau vài giây
+  useEffect(() => {
+    if (!handCandidates) return;
+    const t = setTimeout(() => setHandCandidates(null), 6000);
+    return () => clearTimeout(t);
+  }, [handCandidates]);
+
   const selectStandardTool = (nextTool) => {
     if (isListening) stopVoiceListening();
+    // Rời chế độ viết tay khi còn nét chưa nhận dạng → nhận dạng luôn
+    if (tool === 'hand' && nextTool !== 'hand' && handStrokesRef.current.length) {
+      clearTimeout(handTimerRef.current);
+      recognizeHandwriting();
+    }
     if (nextTool !== 'text') commitText();
     setTool(nextTool);
   };
@@ -674,6 +777,13 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
     }
     if (textInput.visible) commitText();
 
+    if (tool === 'hand') {
+      clearTimeout(handTimerRef.current);
+      setHandCandidates(null);
+      if (!handStrokesRef.current.length) handStartTimeRef.current = Date.now();
+      handStrokesRef.current.push([[Math.round(coords.x)], [Math.round(coords.y)], [Date.now() - handStartTimeRef.current]]);
+    }
+
     isDrawing.current = true;
     startPos.current = coords;
     currentStrokeIdRef.current = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -690,6 +800,17 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
     const ctx = canvasRef.current.getContext('2d');
     const actualColor = tool === 'eraser' ? '#0f172a' : color;
     const actualWidth = tool === 'eraser' ? lineWidth * 3 : lineWidth;
+
+    if (tool === 'hand') {
+      // Nét mực tạm: chỉ vẽ cục bộ, chờ nhận dạng xong mới gửi chữ cho học sinh
+      renderAction(ctx, { tool: 'pen', fromX: startPos.current.x, fromY: startPos.current.y, toX: coords.x, toY: coords.y, color, width: lineWidth });
+      const s = handStrokesRef.current[handStrokesRef.current.length - 1];
+      s[0].push(Math.round(coords.x));
+      s[1].push(Math.round(coords.y));
+      s[2].push(Date.now() - handStartTimeRef.current);
+      startPos.current = coords;
+      return;
+    }
 
     if (tool === 'pen' || tool === 'eraser') {
       const action = {
@@ -730,6 +851,13 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
     if (!isDrawing.current || tool === 'text' || tool === 'voice') return;
     isDrawing.current = false;
     const ctx = canvasRef.current.getContext('2d');
+
+    if (tool === 'hand') {
+      // Dừng viết ~0.9 giây → nhận dạng cả cụm nét
+      clearTimeout(handTimerRef.current);
+      handTimerRef.current = setTimeout(recognizeHandwriting, 900);
+      return;
+    }
 
     if (tool === 'pen' && smartShape) {
       const recognized = detectSmartShape(strokePointsRef.current);
@@ -834,6 +962,17 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
           >
             {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4 text-sky-400" />}
             <span className="text-xs font-semibold">{isListening ? 'Đang nghe...' : 'Nói viết bảng'}</span>
+          </button>
+
+          <button
+            onClick={() => selectStandardTool('hand')}
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-md transition-colors ${
+              tool === 'hand' ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-700/70'
+            }`}
+            title="Viết tay bằng chuột/bút → tự chuyển thành chữ đánh máy"
+          >
+            <PenTool className="w-4 h-4 text-emerald-300" />
+            <span className="text-xs font-semibold hidden sm:inline">Viết tay → Chữ</span>
           </button>
 
           {toolBtn('line', Minus, 'Đường thẳng')}
@@ -1031,6 +1170,31 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
           <div className="absolute top-20 left-1/2 -translate-x-1/2 z-10 px-4 py-2 bg-indigo-600/90 text-white text-xs font-semibold rounded-full shadow-lg backdrop-blur-md pointer-events-none flex items-center gap-2 animate-bounce">
             <Type className="w-4 h-4" />
             <span>Nhấp chuột vào vị trí bất kỳ trên bảng để gõ chữ bằng bàn phím</span>
+          </div>
+        )}
+
+        {/* Gợi ý phương án nhận dạng chữ viết tay khác */}
+        {handCandidates && handCandidates.list.length > 0 && (
+          <div
+            style={{ position: 'absolute', left: `${handCandidates.x}px`, top: `${handCandidates.y}px` }}
+            className="z-30 flex flex-wrap items-center gap-1 p-1 bg-slate-900/95 border border-emerald-500/50 rounded-lg shadow-xl"
+          >
+            <span className="text-[10px] text-slate-400 px-1">Đổi thành:</span>
+            {handCandidates.list.map((c) => (
+              <button
+                key={c}
+                onClick={() => chooseHandCandidate(c)}
+                className="px-2 py-0.5 text-sm rounded bg-slate-800 text-emerald-200 hover:bg-emerald-600 hover:text-white"
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {tool === 'hand' && (
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-10 px-4 py-1.5 bg-emerald-600/90 text-white text-xs font-medium rounded-full shadow-lg backdrop-blur-md pointer-events-none">
+            {handBusy ? 'Đang nhận dạng chữ viết...' : 'Viết chữ lên bảng, dừng ~1 giây sẽ tự chuyển thành chữ đánh máy'}
           </div>
         )}
 
