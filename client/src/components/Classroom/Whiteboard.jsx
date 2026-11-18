@@ -79,6 +79,31 @@ function replaceMathOperators(text) {
     .replace(/ {2,}/g, ' ');
 }
 
+// Câu "có dáng công thức": có biến 1 chữ cái, chữ số hoặc ký hiệu toán
+const MATH_HINT_RE = /(^|[^\p{L}])[a-zA-Z](?!\p{L})|[\d+\-−×÷=<>²³√^≥≤≠≈π]/u;
+
+// Số đọc bằng chữ → chữ số (chỉ dùng trong câu công thức). Bỏ qua khi ngay sau là chữ số ("năm 2024").
+const NUM_VAL = { 'một': 1, 'mốt': 1, 'hai': 2, 'ba': 3, 'bốn': 4, 'tư': 4, 'năm': 5, 'lăm': 5, 'sáu': 6, 'bảy': 7, 'tám': 8, 'chín': 9 };
+const D = 'một|hai|ba|bốn|năm|sáu|bảy|tám|chín';
+const NUM_WORD_RE = new RegExp(
+  `(^|[^\\p{L}\\p{N}])(?:(${D}) mươi(?: (mốt|tư|lăm|${D}))?|mười(?: (một|hai|ba|bốn|lăm|năm|sáu|bảy|tám|chín))?|(${D}))(?=$|[^\\p{L}\\p{N}])(?!\\s*\\d)`,
+  'giu'
+);
+function spokenNumbersToDigits(text) {
+  const v = (w) => NUM_VAL[w.toLowerCase()];
+  return text.replace(NUM_WORD_RE, (m, pre, tens, tensUnit, teenUnit, single) => {
+    if (tens) return pre + (v(tens) * 10 + (tensUnit ? v(tensUnit) : 0));
+    if (single) return pre + v(single);
+    return pre + (10 + (teenUnit ? v(teenUnit) : 0));
+  });
+}
+
+// Chrome hay nghe "bằng" thành "vào"/"bào" — chỉ đổi khi nằm giữa hai toán hạng trong câu công thức
+const MISHEARD_EQUALS_RE = new RegExp(
+  `(?<=(?:^|[^\\p{L}])\\p{L}[⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ]*|[\\p{N}π)⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ])\\s*(?:vào|bào|bàng)\\s*(?=[\\p{N}(√π−-]|\\p{L}(?!\\p{L}))`,
+  'giu'
+);
+
 // Khẩu lệnh "xuống dòng" (kể cả các cách Chrome hay nghe nhầm) — nhận ở bất kỳ vị trí nào trong câu
 const NEWLINE_CMD_RE = /\s*(xuống dòng|xuống giòng|xuống đòng|sướng dòng|xuống dòm)\s*/iu;
 const NEWLINE_CMD_RE_G = new RegExp(NEWLINE_CMD_RE.source, 'giu');
@@ -97,6 +122,9 @@ export function formatSmartSpeechText(rawText) {
     .replace(phrase('mũ (-?\\d+)'), (_, pre, e) => pre + toSup(e))
     .replace(/\s+([⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ⁻]+)/g, '$1')
     .replace(/√\s+/g, '√');
+  if (MATH_HINT_RE.test(text)) {
+    text = spokenNumbersToDigits(text).replace(MISHEARD_EQUALS_RE, ' = ');
+  }
   text = replaceMathOperators(text);
   // Chỉ viết hoa khi mở đầu bằng một từ (không viết hoa biến số như "x²")
   return /^\p{L}{2}/u.test(text) ? text.charAt(0).toUpperCase() + text.slice(1) : text;
