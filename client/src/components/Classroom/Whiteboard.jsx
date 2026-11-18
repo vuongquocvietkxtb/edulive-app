@@ -211,9 +211,11 @@ function splitScriptRuns(strokes) {
     let cls = 'main';
     if (overlapPrev) {
       cls = overlapPrev.cls;
-    } else if (base && b.h > refH * 0.2 && b.h < base.h * 0.9) {
-      if (b.maxY < base.cy) cls = 'sup';
-      else if (b.minY > base.cy) cls = 'sub';
+    } else if (base && b.h > refH * 0.2 && b.h < base.h * 1.1) {
+      // Số mũ: tâm nét cao hơn hẳn tâm chữ gốc và chân không xuống quá giữa chữ gốc
+      if (b.cy < base.cy - 0.3 * base.h && b.maxY < base.cy + 0.15 * base.h) cls = 'sup';
+      // Chỉ số dưới: tâm thấp hơn hẳn và đỉnh không cao hơn giữa chữ gốc (loại trừ chữ có đuôi như y, g)
+      else if (b.cy > base.cy + 0.3 * base.h && b.minY > base.cy - 0.1 * base.h) cls = 'sub';
     }
     b.cls = cls;
     if (cls === 'main' && b.h >= refH * 0.5) base = b;
@@ -790,7 +792,13 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
           const [mainCands] = await recognizeInkBatch([mainInk], W, H);
           const T = candidates[0].replace(/\s+/g, '');
           const combined = mainCands[0] && applyScripts(T, mainCands[0].replace(/\s+/g, ''), scriptRuns.map((r) => r.cls));
+          console.debug('[Viết tay] runs:', runs.map((r) => r.cls).join(','), '| T:', T, '| main:', mainCands[0], '| =>', combined);
           if (combined) candidates = [combined, ...candidates];
+        }
+        // Dự phòng: trong công thức, số viết liền sau biến / dấu ")" là số mũ (x2 → x², (a+b)2 → (a+b)²)
+        if (!/[⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/.test(candidates[0])) {
+          const fallback = candidates[0].replace(/([a-zA-Z)])(\d+)/g, (_, v, e) => v + toSup(e));
+          if (fallback !== candidates[0]) candidates = [fallback, ...candidates];
         }
       }
     } catch (_) {}
