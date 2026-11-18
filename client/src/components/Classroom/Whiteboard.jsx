@@ -20,11 +20,15 @@ import {
 // Regex khớp nguyên cụm từ, hỗ trợ chữ có dấu tiếng Việt (\b của JS chỉ hiểu ký tự ASCII)
 const phrase = (p) => new RegExp(`(^|[^\\p{L}\\p{N}])${p}(?=$|[^\\p{L}\\p{N}])`, 'giu');
 
+const SUP = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻', 'n': 'ⁿ' };
+const toSup = (s) => [...s].map((c) => SUP[c] || c).join('');
+
 const SPEECH_REPLACEMENTS = [
-  ['x bình phương', 'x²'],
-  ['y bình phương', 'y²'],
+  ['bình phương', '²'],
+  ['lập phương', '³'],
   ['mũ hai', '²'],
   ['mũ ba', '³'],
+  ['mũ n', 'ⁿ'],
   ['căn bậc hai của', '√'],
   ['căn bậc hai', '√'],
   ['lớn hơn hoặc bằng', '≥'],
@@ -48,8 +52,14 @@ export function formatSmartSpeechText(rawText) {
   SPEECH_REPLACEMENTS.forEach(([pattern, symbol]) => {
     text = text.replace(pattern, `$1${symbol}`);
   });
-  text = text.replace(/\s+([²³])/g, '$1').replace(/√\s+/g, '√');
-  return text.charAt(0).toUpperCase() + text.slice(1);
+  text = text
+    // Chrome hay trả "x^2", "x ^ 3", "mũ 4" → chỉ số trên
+    .replace(/\s*\^\s*(-?\d+|n)/g, (_, e) => toSup(e))
+    .replace(phrase('mũ (-?\\d+)'), (_, pre, e) => pre + toSup(e))
+    .replace(/\s+([⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ⁻]+)/g, '$1')
+    .replace(/√\s+/g, '√');
+  // Chỉ viết hoa khi mở đầu bằng một từ (không viết hoa biến số như "x²")
+  return /^\p{L}{2}/u.test(text) ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
 // Nhận diện nét vẽ tay để nắn thành hình chuẩn (đường thẳng, chữ nhật, hình tròn)
@@ -394,6 +404,8 @@ export default function Whiteboard({ roomId, user, initialHistory = [] }) {
         }
       }
       if (interim) {
+        // Chữ nháp cũng hiển thị dạng ký hiệu (x² thay vì "x bình phương")
+        interim = formatSmartSpeechText(interim);
         setInterimTranscript(interim);
         const { color: col, fontSize: fSize, socket: sock, roomId: rId } = latestVoiceCtx.current;
         const cur = voiceCursorRef.current;
