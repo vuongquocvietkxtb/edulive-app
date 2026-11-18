@@ -414,6 +414,23 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('whiteboard-draw-update', action);
   });
 
+  socket.on('whiteboard-undo', ({ roomId }) => {
+    const room = getRoomState(roomId);
+    if (room.whiteboardHistory.length === 0) return;
+    const last = room.whiteboardHistory[room.whiteboardHistory.length - 1];
+    if (last.strokeId) {
+      room.whiteboardHistory = room.whiteboardHistory.filter((a) => a.strokeId !== last.strokeId);
+    } else {
+      room.whiteboardHistory.pop();
+    }
+    io.to(roomId).emit('whiteboard-history-sync', room.whiteboardHistory);
+  });
+
+  // Live Speech-to-Board: chữ nháp (interim) của giáo viên
+  socket.on('whiteboard-voice-preview', ({ roomId, preview }) => {
+    socket.to(roomId).emit('whiteboard-voice-preview', preview);
+  });
+
   socket.on('whiteboard-clear', ({ roomId }) => {
     const room = getRoomState(roomId);
     room.whiteboardHistory = [];
